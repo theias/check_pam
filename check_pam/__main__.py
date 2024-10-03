@@ -1,43 +1,51 @@
 #!/usr/bin/env python3
 """
-Icinga2/Nagios plugin which...
-uses `pamtester` to test PAM
+Icinga2/Nagios plugin which uses `pamtester` to test PAM operations
 """
 
 import argparse
 import logging
+import os
 import re
+import shutil
 import sys
-from typing import Generator, Optional
+from typing import List, Optional
 
 import nagiosplugin  # type:ignore
+
+from pamtester import PamTester
+
+UNKNOWN: int = 3
 
 
 def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     """Parse args"""
 
-    # bool_action = (
-    #     # Should be `BooleanOptionalAction` if Python >= 3.9, else the old way
-    #     argparse.BooleanOptionalAction
-    #     if hasattr(argparse, "BooleanOptionalAction")
-    #     else "store_true"
-    # )
-
     usage_examples: str = """examples:
 
-        # Description
+        # Minimal example, will check user `root` against the `login` PAM
+        # service with the operation `open_session`
 
-        %(prog)s <args>
+        %(prog)s root
 
-        # For more on how to set warning and critical ranges, see Nagios
-        # Plugin Development Guidelines:
-        #
-        # https://nagios-plugins.org/doc/guidelines.html#THRESHOLDFORMAT
+        # Check a specific user against the `sshd` PAM service
+        # Depending on your auth configuration, this will likely require that a
+        # password be provided.
+
+         export PAM_PASSWORD='mypass'
+        %(prog)s --operation authenticate --service sshd specific_user
+
+        # Check a specific_user against the `login` PAM service with the
+        # operation `authenticate` plus other options
+
+        %(prog)s --operation 'authenticate(PAM_SILENT | PAM_DISALLOW_NULL_AUTHTOK)' \\
+            specific_user
+
+        For more on the various combinations of services, operations, and other
+        options, see `man pamtester`
 
     """
-    descr: str = """
-        Icinga2/Nagios plugin which uses `pamtester` to test PAM
-        """
+    descr: str = __doc__
     parser = argparse.ArgumentParser(
         description=descr,
         epilog=usage_examples,
@@ -45,10 +53,12 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--critical",
-        "-c",
-        help=("Critical range for ..."),
-        type=str,
+        "--failure-mode",
+        "-f",
+        choices=["critical", "warning"],
+        default="critical",
+        help=("Report CRITICAL or WARNING if an operation fails"),
+        type=str.lower,
     )
 
     parser.add_argument(
@@ -61,29 +71,37 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--warning",
-        "-w",
-        help=("Warning range for ..."),
-        type=str,
+        "--item",
+        "-i",
+        action="append",
+        dest="additional_auth_items",
+        help=(
+            "To include additional authentication information like the name of the "
+            "remote user, the remote host, etc. E.g. `rhost=host.domain.tld`. Can be "
+            "passed multiple times."
+        ),
+        metavar="ITEM=VALUE",
+        type=str.lower,
     )
 
     parser.add_argument(
-        "--auth-config",
-        "-i",
+        "--env",
+        "-e",
         action="append",
-        choices=[
-            "service",
-            "user",
-            "prompt",
-            "tty",
-            "ruser",
-            "rhost",
-        ],
         help=(
-            "To include additional authentication information like the name of the "
-            "remote user, the remote host, etc. Can be passed multiple times."
+            "Environment variable to supply to PAM during the operation. Can be "
+            "passed multiple times."
         ),
+        metavar="ENVVAR=VALUE",
         type=str.lower,
+    )
+
+    parser.add_argument(
+        "--service",
+        "-s",
+        help=("The PAM service name to use, e.g. `login` or `ssh`"),
+        default="login",
+        type=str,
     )
 
     parser.add_argument(
@@ -99,19 +117,25 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
             "and may also include option flags. Refer to the `pamtester` "
             "documentation for more. This can be passed multiple times."
         ),
+        metavar="OPERATION",
         type=str.lower,
     )
 
     parser.add_argument(
-        "--service",
-        "-s",
-        help=("A PAM service name to use."),
+        "--password",
+        "-p",
+        help=(
+            "The user's password, which may be necessary for some operations "
+            "depending on your authorization configuration. Can also be passed via "
+            "environment variable `PAM_PASSWORD`."
+        ),
+        default=os.environ.get("PAM_PASSWORD", None),
         type=str,
     )
 
     parser.add_argument(
         "user",
-        help=("The name of the user account to operate with the PAM facility."),
+        help=("The name of the user account to operate upon"),
         type=str,
     )
 
@@ -121,6 +145,8 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
 
     args = parser.parse_args(argv) if argv else parser.parse_args([])
 
+    # Check that the operations are valid, though we're not going to check the
+    # option flags that can follow
     allowed_operations = [
         "acct_mgmt",
         "authenticate",
@@ -129,13 +155,37 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         "open_session",
     ]
     if args.operations:
-        bare_ops = [re.sub(r"\(.*", "", s) for s in args.operations]
+        bare_ops: List[str] = [re.sub(r"\(.*", "", s) for s in args.operations]
         if not all(op if op in allowed_operations else None for op in bare_ops):
             raise argparse.ArgumentTypeError(
                 f"Operations must be one of `{allowed_operations}`"
             )
     else:
         args.operations = ["open_session"]
+
+    # Validate the keys for additional auth info
+    allowed_additional_auth = [
+        "service",
+        "user",
+        "prompt",
+        "tty",
+        "ruser",
+        "rhost",
+    ]
+    if args.additional_auth_items:
+        bare_items: List[str] = [s.split("=")[0] for s in args.additional_auth_items]
+        if not all(i if i in allowed_additional_auth else None for i in bare_items):
+            raise argparse.ArgumentTypeError(
+                f"Additional auth items must be one of `{allowed_additional_auth}`"
+            )
+
+    # Just set the crit/warn values into something Nagios understands here
+    if args.failure_mode == "critical":
+        args.warning = "~:"
+        args.critical = "0"
+    else:
+        args.critical = "~:"
+        args.warning = "0"
 
     if args.verbosity >= 2:
         log_level = logging.DEBUG
@@ -149,31 +199,6 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     return args
 
 
-# pylint: disable=too-few-public-methods
-class SomeResource(nagiosplugin.Resource):
-    """
-    A model of the thing being monitored
-    """
-
-    def __init__(
-        self,
-    ) -> None:
-        pass
-
-    def probe(self) -> Generator[nagiosplugin.Metric, None, None]:
-        """
-        Run the check itself
-        """
-        yield nagiosplugin.Metric(
-            "metric_name",
-            0,
-            context="context",
-        )
-
-
-# pylint: enable=too-few-public-methods
-
-
 @nagiosplugin.guarded
 def main(
     argv: list,
@@ -182,7 +207,18 @@ def main(
     args = parse_args(argv)
     logging.debug("Argparse results: %s", args)
 
-    some_resource = SomeResource()
+    if shutil.which("pamtester") is None:
+        print("`pamtester` command not found. Aborting.", file=sys.stderr)
+        sys.exit(UNKNOWN)
+
+    some_resource = PamTester(
+        additional_auth_items=args.additional_auth_items,
+        env=args.env,
+        operations=args.operations,
+        password=args.password,
+        service=args.service,
+        user=args.user,
+    )
     context = nagiosplugin.ScalarContext(
         "context",
         warning=args.warning,

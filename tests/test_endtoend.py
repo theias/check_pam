@@ -1,7 +1,13 @@
 """ End-to-end tests """
 
+import os
+
 import pytest  # type:ignore
+
 import check_pam.__main__ as program  # type:ignore
+
+testbin = os.path.join(os.getcwd(), "tests/bin")
+os.environ["PATH"] = f"{testbin}:{os.environ['PATH']}"
 
 
 @pytest.mark.parametrize(
@@ -10,8 +16,8 @@ import check_pam.__main__ as program  # type:ignore
         (
             # OK
             [
-                "--warning",
-                ":1",
+                "--operation=open_session",
+                "valid_user",
             ],
             {
                 "returncode": 0,
@@ -21,8 +27,9 @@ import check_pam.__main__ as program  # type:ignore
         (
             # WARN
             [
-                "--warning",
-                "1:",
+                "--failure-mode=warning",
+                "--operation=open_session",
+                "not_valid_user",
             ],
             {
                 "returncode": 1,
@@ -32,8 +39,34 @@ import check_pam.__main__ as program  # type:ignore
         (
             # CRIT
             [
-                "--critical",
-                "1:",
+                "--operation=open_session",
+                "not_valid_user",
+            ],
+            {
+                "returncode": 2,
+                "output": "CRITICAL",
+            },
+        ),
+        (
+            # OK with password prompt
+            [
+                "--service=login",
+                "--operation=authenticate",
+                "--password=valid_password",
+                "valid_user",
+            ],
+            {
+                "returncode": 0,
+                "output": "OK",
+            },
+        ),
+        (
+            # CRIT for failed auth
+            [
+                "--service=login",
+                "--operation=authenticate",
+                "--password=not_valid_password",
+                "valid_user",
             ],
             {
                 "returncode": 2,
@@ -42,9 +75,11 @@ import check_pam.__main__ as program  # type:ignore
         ),
     ],
     ids=[
-        "Description of the test which is represented by the first set of values",
-        "Description of the test which is represented by the second set of values",
-        "Description of the test which is represented by the third set of values",
+        "OK `open_session` with valid user",
+        "WARN with invalid user",
+        "CRIT with invalid user",
+        "OK with password prompt",
+        "CRIT for failed auth",
     ],
 )
 # pylint: disable=unused-argument
@@ -56,7 +91,7 @@ def test_end_to_end(
     with pytest.raises(SystemExit) as excinfo:
         program.main(argv=test_input)
     assert excinfo.value.code == expected["returncode"]
-    assert expected["output"] in capsys.readouterr()[0].rstrip("\n")
+    assert expected["output"].encode() in capsys.readouterr()[0].encode().rstrip(b"\n")
 
 
 # pylint: enable=unused-argument

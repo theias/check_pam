@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""
+A simple dummy script to simulate `pamtester`
+
+does two things:
+
+* fails if the user is not `valid_user`
+* prompts for a password if the `operation` is `authenticate`
+"""
+
+import sys
+
+VALID_USER = "valid_user"
+VALID_PASSWD = "valid_password"
+
+
+def main():
+    """main"""
+
+    print(
+        """pamtester: invoking pam_start(<service>, <user>, ...)
+pamtester: performing operation - <operation>
+pamtester: sucessfully <did thing>""",
+        file=sys.stderr,
+    )
+    if VALID_USER not in sys.argv:
+        print(
+            "pamtester: Cannot do the thing, sorry",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if "authenticate" in sys.argv:
+        print("Password:", end="", flush=True, file=sys.stderr)
+        line = sys.stdin.readline().rstrip()
+        if line != VALID_PASSWD:
+            print("pamtester: Authentication failure", file=sys.stderr)
+            sys.exit(1)
+        print("pamtester: successfully authenticated", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
