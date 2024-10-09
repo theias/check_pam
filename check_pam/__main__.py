@@ -126,8 +126,9 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         "-p",
         help=(
             "The user's password, which may be necessary for some operations "
-            "depending on your authorization configuration. Can also be passed via "
-            "environment variable `PAM_PASSWORD`."
+            "depending on your authorization configuration. Can also point to a file "
+            "on disk containing the password, or be passed via environment variable "
+            "`PAM_PASSWORD`."
         ),
         default=os.environ.get("PAM_PASSWORD", None),
         type=str,
@@ -144,6 +145,10 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         sys.exit(1)
 
     args = parser.parse_args(argv) if argv else parser.parse_args([])
+
+    if args.password is not None and os.path.isfile(args.password):
+        with open(args.password, "r", encoding="utf-8") as pwfile:
+            args.password = pwfile.readline().rstrip()
 
     # Check that the operations are valid, though we're not going to check the
     # option flags that can follow

@@ -82,32 +82,9 @@ options:
   --password PASSWORD, -p PASSWORD
                         The user's password, which may be necessary for some
                         operations depending on your authorization
-                        configuration. Can also be passed via environment
+                        configuration. Can also point to a file on disk
+                        containing the password, or be passed via environment
                         variable `PAM_PASSWORD`.
-
-examples:
-
-        # Minimal example, will check user `root` against the `login` PAM
-        # service with the operation `open_session`
-
-        check_pam root
-
-        # Check a specific user against the `sshd` PAM service
-        # Depending on your auth configuration, this will likely require that a
-        # password be provided.
-
-         export PAM_PASSWORD='mypass'
-        check_pam --operation authenticate --service sshd specific_user
-
-        # Check a specific_user against the `login` PAM service with the
-        # operation `authenticate` plus other options
-
-        check_pam --operation 'authenticate(PAM_SILENT | PAM_DISALLOW_NULL_AUTHTOK)' \
-            specific_user
-
-        For more on the various combinations of services, operations, and other
-        options, see `man pamtester`
-
 ```
 
 ## Icinga2
@@ -138,7 +115,7 @@ object CheckCommand "pam" {
       value = "$pam_operation$"
     }
     "--password" = {
-      description = "The user's password, which may be necessary for some operations depending on your authorization configuration. Can also be passed via environment variable `PAM_PASSWORD`."
+      description = "The user's password, which may be necessary for some operations depending on your authorization configuration. Can also point to a file on disk containing the password, or be passed via environment variable `PAM_PASSWORD`."
       value = "$pam_password$"
     }
     "--service" = {
