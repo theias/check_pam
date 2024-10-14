@@ -6,7 +6,7 @@ import logging
 import subprocess
 import sys
 
-from typing import Dict, List, Generator, Optional, Union
+from typing import Any, Dict, List, Generator, Optional
 
 import nagiosplugin  # type: ignore
 
@@ -58,18 +58,22 @@ class PamTester(nagiosplugin.Resource):
         try:
             logging.info("Running `pamtester`")
             logging.debug(self.cmd)
-            cond_args: Dict[str, Union[bool, str, bytes]]
+            cond_args: Dict[str, Any] = {}
             if sys.version_info >= (3, 7):
                 # Unfortunately we need to support Python 3.6
-                cond_args = {"text": True}
+                cond_args["text"] = True
             else:
-                cond_args = {"universal_newlines": True}
+                cond_args["universal_newlines"] = True
+            if sys.version_info >= (3, 6):
+                cond_args["stdout"] = subprocess.PIPE
+                cond_args["stderr"] = subprocess.PIPE
+            else:
+                cond_args["capture_output"] = True
             if self.password:
                 logging.debug("Preparing to pass password into `pamtester` STDIN")
                 cond_args["input"] = f"{self.password}\n"
             pamtester = subprocess.run(  # type:ignore
                 self.cmd,
-                capture_output=True,
                 check=True,
                 encoding="utf-8",
                 **cond_args,

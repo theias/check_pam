@@ -16,7 +16,7 @@ python3 -m pip install check_pam
 Or install from source:
 
 ```sh
-git clone <url>
+git clone https://github.com/theias/check_pam.git
 pip install check_pam
 ```
 
